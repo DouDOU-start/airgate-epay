@@ -1,0 +1,57 @@
+# 本文件由 backend/cmd/genmanifest 自动生成，请勿手工修改。
+
+id: payment-epay
+name: 支付插件
+version: 0.2.0
+description: 多渠道支付插件：易支付（虎皮椒/彩虹）/ 支付宝官方 / 微信支付官方
+author: AirGate
+type: extension
+min_core_version: 1.0.0
+dependencies: []
+config:
+  - key: callback_base_url
+    type: string
+    required: true
+    description: 外网可达的 core URL，支付平台异步通知的根地址，如 https://airgate.example.com
+    placeholder: https://airgate.example.com
+  - key: min_amount
+    type: float
+    required: false
+    default: "1"
+    description: 低于此金额的订单将被拒绝
+  - key: max_amount
+    type: float
+    required: false
+    default: "10000"
+    description: 高于此金额的订单将被拒绝
+  - key: daily_limit
+    type: float
+    required: false
+    default: "10000"
+    description: 同一用户单日累计充值上限（按已支付金额统计）
+  - key: order_expire_minutes
+    type: int
+    required: false
+    default: "30"
+    description: 订单创建后多少分钟内未支付自动过期
+frontend_pages:
+  - path: /recharge
+    title: 充值
+    icon: wallet
+    description: 账户余额充值
+    audience: user
+  - path: /orders
+    title: 充值记录
+    icon: history
+    description: 我的充值订单
+    audience: user
+  - path: /admin/orders
+    title: 支付订单
+    icon: receipt
+    description: 全量订单监控
+    audience: admin
+  - path: /admin/providers
+    title: 支付服务商
+    icon: settings
+    description: 管理虎皮椒/彩虹/支付宝官方/微信官方等服务商
+    audience: admin
