@@ -44,7 +44,7 @@ func BuildPluginInfo() sdk.PluginInfo {
 		// 进入 0.3.0 capability 模型而非 sdk_version 兼容路径。
 		// 注：当前仍读 db_dsn 写 public.payment_*；ADR-0001 Decision 5 的 schema 隔离
 		// 留给"未来 cleanup"——本次只完成 capability 声明这一层。
-		Capabilities: []string{},
+		Capabilities: []sdk.Capability{},
 
 		FrontendPages: []sdk.FrontendPage{
 			{
