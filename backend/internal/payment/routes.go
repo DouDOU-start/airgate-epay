@@ -396,6 +396,11 @@ func (p *Plugin) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 派生请求级 logger 写回 ctx
+	rid := sdk.ExtractOrGenerateRequestID(r.Header)
+	ctx := sdk.WithRequestID(r.Context(), rid)
+	ctx, logger := sdk.LoggerWithRequestID(ctx)
+
 	// 同时支持 form-urlencoded（易支付/支付宝）与原始 body（v3 接口）
 	body, _ := io.ReadAll(r.Body)
 	r.Body = io.NopCloser(bytes.NewReader(body))
@@ -403,7 +408,20 @@ func (p *Plugin) handleCallback(w http.ResponseWriter, r *http.Request) {
 		_ = err
 	}
 
-	res, err := p.svc.HandleCallback(r.Context(), providerID, provider.CallbackRequest{
+	// 入口日志：仅记录订单号，不打印签名/完整 body
+	var outTradeNo string
+	if r.Form != nil {
+		outTradeNo = r.Form.Get("out_trade_no")
+		if outTradeNo == "" {
+			outTradeNo = r.Form.Get("trade_order_id")
+		}
+	}
+	logger.Info("payment_callback_received",
+		"provider", providerID,
+		"out_trade_no", outTradeNo,
+	)
+
+	res, err := p.svc.HandleCallback(ctx, providerID, provider.CallbackRequest{
 		Form:    r.Form,
 		Body:    body,
 		Headers: r.Header,

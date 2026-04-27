@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	sdk "github.com/DouDOU-start/airgate-sdk"
+
 	"github.com/DouDOU-start/airgate-epay/backend/internal/payment/provider"
 )
 
@@ -140,6 +142,13 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (*Order,
 	outTradeNo := generateOutTradeNo()
 	expiresAt := now.Add(s.expireAfter)
 
+	s.logger.Debug("provider_request_start",
+		"provider", prov.ID(),
+		"kind", prov.Kind(),
+		"out_trade_no", outTradeNo,
+		"method", in.Method,
+		"amount", in.Amount,
+	)
 	chRes, err := prov.CreateOrder(ctx, provider.CreateOrderInput{
 		OutTradeNo: outTradeNo,
 		Amount:     in.Amount,
@@ -150,8 +159,21 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (*Order,
 		ClientIP:   in.ClientIP,
 	})
 	if err != nil {
+		s.logger.Error("upstream_request_failed",
+			"provider", prov.ID(),
+			"kind", prov.Kind(),
+			"out_trade_no", outTradeNo,
+			"method", in.Method,
+			sdk.LogFieldError, err,
+		)
 		return nil, fmt.Errorf("渠道下单失败: %w", err)
 	}
+	s.logger.Debug("upstream_request_completed",
+		"provider", prov.ID(),
+		"kind", prov.Kind(),
+		"out_trade_no", outTradeNo,
+		"method", in.Method,
+	)
 
 	// 落库（channel 列保留写入 provider_id 以兼容老数据消费方）
 	var id int64
@@ -165,8 +187,23 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (*Order,
 		chRes.PaymentURL, chRes.QRCodeContent, expiresAt, now,
 	).Scan(&id)
 	if err != nil {
+		s.logger.Error("payment_record_persist_failed",
+			"out_trade_no", outTradeNo,
+			sdk.LogFieldUserID, in.UserID,
+			"provider", prov.ID(),
+			sdk.LogFieldError, err,
+		)
 		return nil, fmt.Errorf("订单落库失败: %w", err)
 	}
+
+	s.logger.Info("payment_order_created",
+		"order_id", id,
+		"out_trade_no", outTradeNo,
+		"amount", in.Amount,
+		"provider", prov.ID(),
+		"method", in.Method,
+		sdk.LogFieldUserID, in.UserID,
+	)
 
 	return &Order{
 		ID:            id,
@@ -193,15 +230,38 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (*Order,
 func (s *Service) HandleCallback(ctx context.Context, providerID string, req provider.CallbackRequest) (*provider.CallbackResult, error) {
 	prov := s.registry.Find(providerID)
 	if prov == nil {
+		s.logger.Warn("payment_callback_unknown_provider", "provider", providerID)
 		return nil, fmt.Errorf("未知的支付服务商: %s", providerID)
 	}
 	res, err := prov.VerifyCallback(ctx, req)
 	if err != nil {
+		// 仅记录订单号（form 里的 out_trade_no），不打印签名串/完整 body
+		var outTradeNo string
+		if req.Form != nil {
+			outTradeNo = req.Form.Get("out_trade_no")
+			if outTradeNo == "" {
+				outTradeNo = req.Form.Get("trade_order_id")
+			}
+		}
+		s.logger.Warn("payment_callback_signature_invalid",
+			"provider", providerID,
+			"out_trade_no", outTradeNo,
+			sdk.LogFieldError, err,
+		)
 		return nil, err
 	}
+	s.logger.Debug("payment_callback_signature_verified",
+		"provider", providerID,
+		"out_trade_no", res.OutTradeNo,
+		"status", res.Status,
+	)
 	if res.Status == "paid" {
 		if err := s.markPaid(ctx, res); err != nil {
-			s.logger.Error("处理回调落账失败", "out_trade_no", res.OutTradeNo, "error", err)
+			s.logger.Error("payment_record_persist_failed",
+				"out_trade_no", res.OutTradeNo,
+				"provider", providerID,
+				sdk.LogFieldError, err,
+			)
 			return nil, err
 		}
 	}
@@ -240,7 +300,11 @@ func (s *Service) markPaid(ctx context.Context, cb *provider.CallbackResult) err
 		return fmt.Errorf("锁订单失败: %w", err)
 	}
 	if status == "paid" {
-		s.logger.Info("订单已支付，跳过重复处理", "out_trade_no", cb.OutTradeNo)
+		s.logger.Info("payment_callback_idempotent_hit",
+			"out_trade_no", cb.OutTradeNo,
+			"order_id", orderID,
+			sdk.LogFieldUserID, userID,
+		)
 		return nil
 	}
 	if status != "pending" {
@@ -260,6 +324,12 @@ func (s *Service) markPaid(ctx context.Context, cb *provider.CallbackResult) err
 	}
 	afterBalance := beforeBalance + amount
 	if _, err := tx.ExecContext(ctx, `UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2`, afterBalance, userID); err != nil {
+		s.logger.Error("payment_balance_update_failed",
+			sdk.LogFieldUserID, userID,
+			"amount", amount,
+			"out_trade_no", cb.OutTradeNo,
+			sdk.LogFieldError, err,
+		)
 		return fmt.Errorf("更新余额失败: %w", err)
 	}
 
@@ -286,12 +356,15 @@ func (s *Service) markPaid(ctx context.Context, cb *provider.CallbackResult) err
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("提交事务失败: %w", err)
 	}
-	s.logger.Info("订单已标记 paid 并落账",
+	s.logger.Info("payment_marked_paid",
 		"out_trade_no", cb.OutTradeNo,
-		"user_id", userID,
+		"order_id", orderID,
+		sdk.LogFieldUserID, userID,
 		"amount", amount,
 		"method", method,
-		"provider_id", providerID,
+		"provider", providerID,
+		"before_balance", beforeBalance,
+		"after_balance", afterBalance,
 	)
 	return nil
 }
