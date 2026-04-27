@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { cssVar } from '@airgate/theme';
 import { api, type Order, type OrderStats } from './api';
 
@@ -8,6 +8,17 @@ const EMPTY_STATS: OrderStats = {
 };
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+const STATUS_OPTIONS = [
+  { value: 'all', label: '全部状态' },
+  { value: 'pending', label: '待支付' },
+  { value: 'paid', label: '已支付' },
+  { value: 'expired', label: '已过期' },
+  { value: 'failed', label: '失败' },
+  { value: 'cancelled', label: '已取消' },
+  { value: 'refunded', label: '已退款' },
+];
+
+type SelectOption = { value: string; label: string };
 
 /**
  * AdminOrdersPage 管理员订单总览
@@ -75,19 +86,12 @@ export default function AdminOrdersPage() {
       {/* 筛选 + 表格 + 分页 卡片 */}
       <div style={panelStyle}>
         <div style={filterRowStyle}>
-          <select
+          <CustomSelect
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={setStatusFilter}
+            options={STATUS_OPTIONS}
             style={selectStyle}
-          >
-            <option value="all">全部状态</option>
-            <option value="pending">待支付</option>
-            <option value="paid">已支付</option>
-            <option value="expired">已过期</option>
-            <option value="failed">失败</option>
-            <option value="cancelled">已取消</option>
-            <option value="refunded">已退款</option>
-          </select>
+          />
           <input
             type="text"
             value={emailFilter}
@@ -249,6 +253,68 @@ function RefreshIconButton({ onClick, loading }: { onClick: () => void; loading:
   );
 }
 
+function CustomSelect({
+  value,
+  options,
+  onChange,
+  style,
+}: {
+  value: string;
+  options: SelectOption[];
+  onChange: (value: string) => void;
+  style?: React.CSSProperties;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = options.find((option) => option.value === value);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [open]);
+
+  return (
+    <div ref={ref} style={selectWrapStyle}>
+      <button
+        type="button"
+        style={{ ...style, ...selectButtonStyle, ...(open ? selectButtonOpenStyle : null) }}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span style={selectButtonTextStyle}>{selected?.label ?? ''}</span>
+        <span aria-hidden="true" style={selectCaretStyle}>v</span>
+      </button>
+      {open && (
+        <div role="listbox" style={selectDropdownStyle}>
+          {options.map((option) => {
+            const isSelected = option.value === value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                style={{ ...selectOptionStyle, ...(isSelected ? selectOptionActiveStyle : null) }}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ========== 分页组件 ==========
 // 视觉对齐 core 的 Table.tsx Pagination：左侧 "共 X 条 · 第 N/M 页 + 页大小下拉"，
 // 右侧上下页箭头 + 数字页码（>7 页时带省略号）。
@@ -270,15 +336,12 @@ function Pagination({ page, pageSize, total, totalPages, onPageChange, onPageSiz
         <span style={paginationSummaryStyle}>
           共 {total} 条 · 第 {page}/{totalPages} 页
         </span>
-        <select
-          value={pageSize}
-          onChange={(e) => onPageSizeChange(Number(e.target.value))}
+        <CustomSelect
+          value={String(pageSize)}
+          onChange={(value) => onPageSizeChange(Number(value))}
+          options={PAGE_SIZE_OPTIONS.map((s) => ({ value: String(s), label: `${s} 条/页` }))}
           style={paginationSizeSelectStyle}
-        >
-          {PAGE_SIZE_OPTIONS.map((s) => (
-            <option key={s} value={s}>{s} 条/页</option>
-          ))}
-        </select>
+        />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
         <button
@@ -390,7 +453,81 @@ const selectStyle: React.CSSProperties = {
   background: cssVar('bg'),
   color: cssVar('text'),
   fontSize: 13,
+};
+
+const selectWrapStyle: React.CSSProperties = {
+  position: 'relative',
+  display: 'inline-block',
+};
+
+const selectButtonStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 8,
+  width: '100%',
+  fontFamily: 'inherit',
+  cursor: 'pointer',
   outline: 'none',
+};
+
+const selectButtonOpenStyle: React.CSSProperties = {
+  borderColor: cssVar('primary'),
+  boxShadow: `0 0 0 3px ${cssVar('primarySubtle')}`,
+};
+
+const selectButtonTextStyle: React.CSSProperties = {
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};
+
+const selectCaretStyle: React.CSSProperties = {
+  flexShrink: 0,
+  color: cssVar('textTertiary'),
+  fontSize: 10,
+  lineHeight: 1,
+};
+
+const selectDropdownStyle: React.CSSProperties = {
+  position: 'absolute',
+  left: 0,
+  top: 'calc(100% + 6px)',
+  zIndex: 20,
+  display: 'flex',
+  flexDirection: 'column',
+  minWidth: '100%',
+  width: 'max-content',
+  maxHeight: 260,
+  padding: 6,
+  border: `1px solid ${cssVar('glassBorder')}`,
+  borderRadius: cssVar('radiusMd'),
+  background: cssVar('bgSurface'),
+  boxShadow: '0 18px 48px rgba(0, 0, 0, 0.28)',
+  overflowY: 'auto',
+};
+
+const selectOptionStyle: React.CSSProperties = {
+  display: 'block',
+  width: '100%',
+  padding: '8px 10px',
+  border: 'none',
+  borderRadius: 8,
+  background: 'transparent',
+  color: cssVar('textSecondary'),
+  fontFamily: 'inherit',
+  fontSize: 13,
+  lineHeight: 1.35,
+  textAlign: 'left',
+  whiteSpace: 'nowrap',
+  cursor: 'pointer',
+};
+
+const selectOptionActiveStyle: React.CSSProperties = {
+  background: cssVar('primarySubtle'),
+  color: cssVar('primary'),
+  fontWeight: 600,
 };
 
 const inputStyle: React.CSSProperties = {
