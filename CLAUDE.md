@@ -7,12 +7,11 @@
 
 ## 🚫 红线
 
-- 只依赖 `airgate-sdk`，禁止 import core 内部；用 core 能力经 `Host.Invoke`/`InvokeStream`。
+通用边界铁律（只依赖 `airgate-sdk`、经 `Host.Invoke`/`InvokeStream` 调 core、`plugin.yaml` 由 `make manifest` 生成不可手改、前端单 `index.js` bundle）见 skill **`develop-plugin`「🚫 边界铁律」**。本仓特有：
+
 - **加余额一律经 `Host.Invoke("users.update_balance")`**（`idempotency_key` 必填，约定 `epay:<out_trade_no>`），**禁止直写 core 的 `users`/`balance_logs` 表**；`db_dsn` 连接只读写插件自有表 `payment_*`（已知遗留：admin 订单列表只读 JOIN users 取邮箱，勿新增同类访问）。
-- `plugin.yaml` 由 `make manifest` 生成，不可手改。
 - 支付回调/签名校验属敏感逻辑，改动务必配套测试，别绕过校验。
-- 前端单 `index.js` → `web/dist/index.js`，用 `@doudou-start/airgate-theme`。
 
 ## 命令
 
-`make dev`（独立调试）· `make manifest` · `make build` · `make ci` · `make release`
+构建/发布命令见 skill **`develop-plugin`「构建 / 发布」**；本仓实际 make 目标以 `Makefile` 为准。
